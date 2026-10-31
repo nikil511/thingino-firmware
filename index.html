@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Origin Check</title>
+<style>
+:root {
+  --bg: #f7f7f5; --fg: #1c1c1a; --muted: #6b6b66; --card: #fff; --line: #e2e2dc;
+  --ok: #1f7a3a; --bad: #b3261e; --warn: #8a5a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151514; --fg: #ececea; --muted: #9a9a94; --card: #1f1f1d; --line: #33332f;
+          --ok: #5cc27a; --bad: #ff7b72; --warn: #e0b24a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+       font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 40px 16px; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 24px; }
+#drop { border: 2px dashed var(--line); border-radius: 12px; background: var(--card);
+        padding: 40px 16px; text-align: center; cursor: pointer; }
+#drop.over { border-color: var(--fg); }
+#drop input { display: none; }
+#out { margin-top: 24px; display: none; background: var(--card); border: 1px solid var(--line);
+       border-radius: 12px; padding: 20px; }
+#status { font-size: 1.3rem; font-weight: 650; margin: 0 0 4px; }
+#status.ok { color: var(--ok); } #status.bad { color: var(--bad); } #status.warn { color: var(--warn); }
+#reason { margin: 0 0 16px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, Menlo, monospace;
+     font-size: .85rem; overflow-wrap: anywhere; }
+img { max-width: 100%; border-radius: 8px; margin-top: 16px; }
+footer { color: var(--muted); font-size: .85rem; margin-top: 32px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo origin check</h1>
+  <p class="lead">Check whether a JPEG was signed by a registered Thingino camera.
+  The photo never leaves your browser.</p>
+
+  <label id="drop">
+    <input type="file" id="file" accept="image/jpeg">
+    <strong>Drop the original JPEG here</strong><br>
+    <span style="color:var(--muted)">or click to choose a file</span>
+  </label>
+
+  <section id="out">
+    <p id="status"></p>
+    <p id="reason"></p>
+    <dl id="facts"></dl>
+    <img id="preview" alt="">
+  </section>
+
+  <footer>Public keys: <a href="keys/devices.json">keys/devices.json</a>.
+  Command-line equivalent: <code>python3 verify.py photo.jpg</code>.
+  Uses WebCrypto Ed25519 (Chrome 137+, Firefox 129+, Safari 17+).</footer>
+</main>
+<script>
+const UUID = "b050bf0788564598869e44c4dc208f26";
+const SEG = 93;
+
+const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const unhex = (s) => new Uint8Array(s.match(/../g).map((h) => parseInt(h, 16)));
+
+async function fingerprint(pub) {
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-512", pub)).slice(0, 8));
+}
+
+function markerAt(d, i) {
+  if (d[i] !== 0xff || d[i + 1] !== 0xef || d[i + 2] !== 0x00 || d[i + 3] !== 0x5b) return false;
+  return hex(d.subarray(i + 4, i + 20)) === UUID;
+}
+
+function captureTime(d) {
+  if (d[2] !== 0xff || d[3] !== 0xe1) return null;
+  if (new TextDecoder().decode(d.subarray(6, 12)) !== "Exif\0\0") return null;
+  const t = new TextDecoder().decode(d.subarray(12 + 68, 12 + 87));
+  const us = new TextDecoder().decode(d.subarray(12 + 95, 12 + 101));
+  const m = t.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)$/);
+  return m && /^\d{6}$/.test(us) ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}.${us}Z` : null;
+}
+
+async function check(d) {
+  const r = { sha256: hex(new Uint8Array(await crypto.subtle.digest("SHA-256", d))), time: captureTime(d) };
+  if (d[0] !== 0xff || d[1] !== 0xd8) return { ...r, status: "NOT_SIGNED", reason: "Not a JPEG file." };
+  const end = d.length - 2 - SEG;
+  if (!(d[d.length - 2] === 0xff && d[d.length - 1] === 0xd9 && end >= 2 && markerAt(d, end))) {
+    for (let i = 2; i < d.length - 20; i++) {
+      if (markerAt(d, i))
+        return { ...r, status: "INVALID", reason: "A signature exists but is no longer at the end of the file: bytes were added or removed after signing." };
+    }
+    return { ...r, status: "NOT_SIGNED", reason: "No camera signature found. Re-saved, resized, screenshotted or messaged photos lose it; use the original file." };
+  }
+  const seg = d.subarray(end);
+  r.fp = hex(seg.subarray(21, 29));
+  if (seg[20] !== 1) return { ...r, status: "INVALID", reason: `Unsupported signature version ${seg[20]}.` };
+
+  const reg = await (await fetch("keys/devices.json", { cache: "no-store" })).json();
+  const matches = [];
+  for (const dev of reg.devices || []) {
+    if ((await fingerprint(unhex(dev.public_key))) === r.fp) matches.push(dev);
+  }
+  if (!matches.length) return { ...r, status: "UNKNOWN_DEVICE", reason: "Signed, but by a key that is not in the registry." };
+
+  for (const dev of matches) {
+    const key = await crypto.subtle.importKey("raw", unhex(dev.public_key), { name: "Ed25519" }, false, ["verify"]);
+    if (await crypto.subtle.verify("Ed25519", key, seg.subarray(29, 93), d.subarray(0, end)))
+      return { ...r, status: "VERIFIED", device: dev };
+  }
+  return { ...r, status: "INVALID", reason: "The signature does not match the image: it was modified after the camera signed it." };
+}
+
+function show(file, r) {
+  const out = document.getElementById("out");
+  const st = document.getElementById("status");
+  const cls = { VERIFIED: "ok", INVALID: "bad", NOT_SIGNED: "warn", UNKNOWN_DEVICE: "warn" }[r.status] || "bad";
+  st.className = cls;
+  st.textContent = r.status === "VERIFIED" ? `Verified: taken by ${r.device.id}` : r.status.replace("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+  document.getElementById("reason").textContent = r.status === "VERIFIED"
+    ? "The image is byte-for-byte what this camera signed." : r.reason;
+  const rows = [["File", file.name], ["SHA-256", r.sha256]];
+  if (r.fp) rows.push(["Key fingerprint", r.fp]);
+  if (r.time) rows.push([r.status === "VERIFIED" ? "Capture time (signed)" : "Capture time (unverified)", r.time]);
+  if (r.device) {
+    if (r.device.description) rows.push(["Device", r.device.description]);
+    rows.push(["Public key", r.device.public_key]);
+  }
+  const dl = document.getElementById("facts");
+  dl.replaceChildren(...rows.flatMap(([k, v]) => {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    return [dt, dd];
+  }));
+  document.getElementById("preview").src = URL.createObjectURL(file);
+  out.style.display = "block";
+}
+
+async function handle(file) {
+  try {
+    show(file, await check(new Uint8Array(await file.arrayBuffer())));
+  } catch (e) {
+    show(file, { status: "ERROR", reason: String(e.message || e), sha256: "" });
+  }
+}
+
+const drop = document.getElementById("drop");
+document.getElementById("file").addEventListener("change", (e) => e.target.files[0] && handle(e.target.files[0]));
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

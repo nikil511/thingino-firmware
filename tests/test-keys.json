@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "id": "test-key-not-a-camera",
+      "description": "Publicly known test key used only by tests/. Never trust it.",
+      "public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+    }
+  ]
+}
