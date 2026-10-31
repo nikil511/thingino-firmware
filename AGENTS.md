@@ -21,13 +21,14 @@ that camera produced.
 If you are not already in a checkout of it:
 
 ```bash
-git clone --branch device-keys --single-branch --depth 1 \
+git clone --branch device-keys --single-branch \
   https://github.com/nikil511/thingino-firmware.git photo-origin
 cd photo-origin
 ```
 
-This branch shares no files with the firmware branches, so the clone is
-small. If you cannot use git, downloading `verify.py` alone is enough; it
+This branch shares no history with the firmware branches, so the clone is
+small. Keep the full history (no `--depth 1`): `git log -p keys/devices.json`
+then shows when each camera key was added. If you cannot use git, downloading `verify.py` alone is enough; it
 fetches the key list itself:
 
 ```bash
@@ -49,10 +50,11 @@ curl -sSfLO https://raw.githubusercontent.com/nikil511/thingino-firmware/device-
 ## 3. Run the verifier
 
 ```bash
-python3 verify.py --json photo.jpg
+python3 -I verify.py --json photo.jpg
 ```
 
-Python 3 is all it needs. Useful variants:
+Python 3 is all it needs (`-I` keeps Python from loading modules from the
+current directory). Useful variants:
 
 - `--key <64 hex chars>` checks against one specific public key instead of
   the registry.
@@ -63,21 +65,22 @@ works: `sh tests/run.sh` should print four `ok` lines.
 
 ## 4. Interpret the result
 
-The JSON contains `status`, and where they apply `device`,
-`key_fingerprint`, `capture_time_utc`, `sha256`, `registry` and `reason`.
+The JSON contains `status`, `sha256`, `capture_time_utc` and
+`capture_time_signed`, and where they apply `device`, `key_fingerprint`,
+`registry` and `reason`.
 
 | `status` | Exit | Meaning | What to tell the person |
 | --- | --- | --- | --- |
 | `VERIFIED` | 0 | Signed by a registered camera, unchanged since. | Camera `device.id` and its description, the capture time, and the file's SHA-256. |
-| `INVALID` | 1 | It has a camera signature, but the file changed after signing. | Treat it as altered. Quote `reason`. |
+| `INVALID` | 1 | It has a camera signature, but the file changed after signing. | Treat it as altered. Quote `reason`. If you have another copy, compare the bytes to show what changed. |
 | `NOT_SIGNED` | 3 | No camera signature in the file. | Either not from a registered camera, or re-encoded on the way. Ask for the original. |
 | `UNKNOWN_DEVICE` | 4 | Signed by a camera whose key is not registered here. | Origin cannot be confirmed. Give the `key_fingerprint`. |
 | (none) | 2 | Tool or input error, message on stderr. | Fix the input and rerun. Do not report a verdict. |
 
 Rules for the answer:
 
-- Call the capture time "signed" only when the status is `VERIFIED`. Even
-  then, it is the camera's own clock.
+- Call the capture time "signed" only when `capture_time_signed` is true.
+  Even then, it is the camera's own clock.
 - `VERIFIED` is about the file, not the scene. Always add one sentence on the
   limits: in this demo the key is stored in the camera's flash, so someone
   with full access to that camera could copy it, and a camera photographing
@@ -92,14 +95,25 @@ Example answer for a verified photo:
 > scene was genuine, and in this demo the camera's key could be copied by
 > someone with full access to the device.
 
-## 5. If you want a second opinion
+## 5. Several photos at once
+
+Check each file separately and report each verdict. Then look across them:
+
+- Two different files with the same signed capture time (to the
+  microsecond) cannot both be originals. If one verifies, the other is a
+  modified copy of it.
+- Compare signed capture times with what the person claims (order, date,
+  time of day).
+- Photos from different `device.id` values came from different cameras.
+
+## 6. If you want a second opinion
 
 `verify.py` uses its own small Ed25519 implementation so that it needs no
 packages. `VALIDATION.md` ("Independent cross-check") has a 20-line script
 that runs the same check with the `cryptography` library. If the two
 disagree, report that instead of a verdict.
 
-## 6. Without Python
+## 7. Without Python
 
 Implement the steps in `VALIDATION.md` ("Validation steps") with any standard
 Ed25519 library (libsodium, Go `crypto/ed25519`, Node

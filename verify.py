@@ -206,6 +206,7 @@ def verify(path, registry_source, key_hex):
         "file": path,
         "sha256": hashlib.sha256(data).hexdigest(),
         "capture_time_utc": capture_time(data),
+        "capture_time_signed": False,
     }
 
     parsed = parse_signature(data)
@@ -236,11 +237,14 @@ def verify(path, registry_source, key_hex):
 
     for dev in candidates:
         if ed25519_verify(bytes.fromhex(dev["public_key"]), message, sig):
-            result.update(status="VERIFIED", device=dev)
+            result.update(status="VERIFIED", device=dev, capture_time_signed=True)
             return 0, result
 
-    result.update(status="INVALID",
-                  reason="signature does not match the image: it was modified after signing, or signed by a different key")
+    if any(dev["fingerprint"] == fp for dev in candidates):
+        reason = "the file was modified after the camera signed it"
+    else:
+        reason = "signed by a different key than the one given with --key"
+    result.update(status="INVALID", reason=reason)
     return 1, result
 
 

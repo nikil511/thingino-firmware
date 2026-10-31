@@ -26,8 +26,8 @@ so the photo still opens normally.
 
 - **The registry.** A `VERIFIED` result means "signed by a key listed in
   `keys/devices.json`". Whoever can push to this branch decides which keys
-  are listed. `git log -p keys/devices.json` shows when each key was added and
-  by whom.
+  are listed. In a full clone (not `--depth 1`), `git log -p keys/devices.json`
+  shows when each key was added and by whom.
 - **The camera kept its key secret.** In this demo the key is a file in the
   camera's flash. Someone with root access to that camera could copy it.
 - **The camera clock.** The capture time is signed, so nobody can change it
@@ -86,7 +86,9 @@ Each step either continues or ends with the result shown.
 6. **Verify the signature.** Run standard Ed25519 verification (RFC 8032)
    with that public key, the 64-byte signature from segment bytes 29-92,
    and the message `file[0 : len - 95]`.
-   Valid: `VERIFIED`. Invalid: `INVALID`.
+   Valid: `VERIFIED`. Invalid: `INVALID`. Because the fingerprint already
+   matched a registered key, an invalid signature here means the file
+   changed after signing, not that a different camera signed it.
 7. **Read the capture time** (optional). If bytes 2-3 are `FF E1` and bytes
    6-11 are `Exif\0\0`, the TIFF block starts at byte 12. The date is the
    19 ASCII characters at TIFF offset 68 (`YYYY:MM:DD HH:MM:SS`, UTC) and the
@@ -122,6 +124,7 @@ packages. To check its answer with a well-known library instead
 
 ```python
 import hashlib, json, sys
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 photo, registry = sys.argv[1], sys.argv[2]
@@ -135,15 +138,17 @@ fp, sig, msg = seg[21:29], seg[29:93], d[:-95]
 for dev in json.load(open(registry))["devices"]:
     pub = bytes.fromhex(dev["public_key"])
     if hashlib.sha512(pub).digest()[:8] == fp:
-        Ed25519PublicKey.from_public_bytes(pub).verify(sig, msg)  # raises if invalid
-        print("VERIFIED", dev["id"])
+        try:
+            Ed25519PublicKey.from_public_bytes(pub).verify(sig, msg)
+            print("VERIFIED", dev["id"])
+        except InvalidSignature:
+            print("INVALID", dev["id"])
         break
 else:
     print("UNKNOWN_DEVICE", fp.hex())
 ```
 
-Run it as `python3 crosscheck.py photo.jpg keys/devices.json`. An
-`InvalidSignature` exception means `INVALID`.
+Run it as `python3 -I crosscheck.py photo.jpg keys/devices.json`.
 
 ## What removes or breaks a signature
 
