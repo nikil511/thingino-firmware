@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 
 # Raw URL of keys/devices.json on the published branch. A local copy next
 # to this script (a git clone of the branch) takes precedence.
-REGISTRY_URL = "https://raw.githubusercontent.com/OWNER/REPO/device-keys/keys/devices.json"
+REGISTRY_URL = "https://raw.githubusercontent.com/nikil511/thingino-firmware/device-keys/keys/devices.json"
 
 SIGN_UUID = bytes.fromhex("b050bf0788564598869e44c4dc208f26")
 SEGMENT_LEN = 93  # FF EF + 2-byte length + 16 uuid + 1 version + 8 fp + 64 sig
