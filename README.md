@@ -10,6 +10,7 @@ before relying on it.
 - `index.html`: the same check in the browser. The photo never leaves the page.
 - `AGENTS.md`: step-by-step instructions for an AI agent asked to verify a photo.
 - `tests/`: sample photos signed by the real camera code with a public test key.
+- `camera/`: `snapsign`, the signing add-on for cameras that run prudynt.
 
 This branch has no shared history with the firmware branches (`git checkout --orphan`).
 
@@ -75,6 +76,10 @@ Raptor's own `rverify` tool checks the same format:
 `rverify -k <pubkey> photo.jpg`.
 
 ## Register a camera
+
+Cameras running prudynt instead of raptor (for example the Ciao release) need
+the `snapsign` add-on first. It signs in the same format with the same key
+file; see [camera/README.md](camera/README.md). The steps below are for raptor.
 
 1. On the camera, make sure signing is on in `/etc/raptor.conf`:
 

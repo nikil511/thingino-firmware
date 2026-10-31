@@ -1,0 +1,19 @@
+#!/bin/sh
+# shellcheck disable=SC1091
+# BusyBox httpd CGI: signed snapshot from channel 0
+. /var/www/x/auth.sh
+require_auth
+
+tmp=/tmp/snap-signed.$$
+trap 'rm -f "$tmp"' EXIT
+
+if prudyntctl snapshot -c 0 | snapsign >"$tmp" && [ -s "$tmp" ]; then
+	printf "Content-Type: image/jpeg\r\n"
+	printf "Content-Disposition: inline; filename=\"snapshot-%s.jpg\"\r\n" "$(date -u +%Y%m%dT%H%M%SZ)"
+	printf "\r\n"
+	cat "$tmp"
+else
+	printf "Status: 500 Internal Server Error\r\n"
+	printf "Content-Type: text/plain\r\n\r\n"
+	printf "snapshot signing failed\n"
+fi
