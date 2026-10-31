@@ -1,0 +1,13 @@
+config BR2_PACKAGE_THINGINO_LIGHTGUN_BENCH
+	bool "thingino-lightgun-bench"
+	select BR2_PACKAGE_INGENIC_LIB
+	select BR2_PACKAGE_INGENIC_MUSL if BR2_TOOLCHAIN_USES_MUSL
+	select BR2_PACKAGE_INGENIC_UCLIBC if BR2_TOOLCHAIN_USES_UCLIBC
+	help
+	  Lightgun camera experiments:
+	  - lgcap: native NV12 FrameSource capture benchmark (no encoder):
+	    ISP and delivered frame rate, drops/duplicates, ISP->app
+	    latency, optional threshold+CCL tracking workload, ISP scaler
+	    channels, frame dumps for FOV comparison, LED-based
+	    photon-to-app latency.
+	  - lgbench: runs the standard lgcap matrix for one sensor mode.

@@ -1,0 +1,479 @@
+From: Manolis Nikiforakis <manolis@weatherxm.com>
+Subject: [PATCH] sensor: t23/sc2336 selectable readout modes
+
+Add a sensor_mode module parameter with a per-mode timing table:
+0 stock 1080p (now up to 32 fps), 1 the 1280x720@60 table from
+espressif/esp-video-components, 2-6 experimental centre crops / full-width
+strips derived from those tables by reprogramming window and HTS/VTS at the
+same 81 MHz PLL, 7 experimental 2x2 bin/skip (SC200AI recipe; corrupt
+image on SC2336, kept for research).  Limits measured on a T23N: the ISP
+needs >= ~30 lines of vertical blanking.
+
+Also cap exposure at VTS-6 instead of VTS-4: at VTS-4 the SC2336
+stretches the frame (1080p30 measured at 33.50 ms instead of 33.33).
+---
+--- a/common/sensor/t23/sc2336.c	2026-10-30 23:42:22
++++ b/common/sensor/t23/sc2336.c	2026-10-31 01:46:09
+@@ -49,6 +49,18 @@
+ static int shvflip = 0;
+ module_param(shvflip, int, S_IRUGO);
+ MODULE_PARM_DESC(shvflip, "Sensor HV Flip Enable interface");
++
++/*
++ * Sensor readout mode, chosen at load time (/etc/modules.d/30-sensor):
++ *   0  1920x1080 full array, HTS 2250, 25 fps default, 30 max (stock)
++ *   1  1280x720  centre crop (2/3 FOV), HTS 1800 VTS 750, 60 fps (published)
++ *   2-7          EXPERIMENTAL derived crops/strips/binning, see sensor_modes[]
++ * All modes share the stock PLL: 24 MHz MCLK, 2 lanes x 405 Mbps RAW10,
++ * 81 MHz pixel clock.  fps = 81e6 / (HTS * VTS).
++ */
++static int sensor_mode = 0;
++module_param(sensor_mode, int, S_IRUGO);
++MODULE_PARM_DESC(sensor_mode, "Readout mode: 0=1080p25-32 1=720p60 2=1920x540@60-63 3=960x540@75-78 4=640x480@75-88 5=640x360@90-115 6=1920x360@90-92 7=960x540bin@60 (2-7 experimental)");
+ 
+ static struct sensor_info sensor_info = {
+ 	.name = SENSOR_NAME,
+@@ -424,6 +436,185 @@
+ 	{0x3953, 0x0f},
+ 	{0x3e01, 0x4a},
+ 	{0x3e02, 0xb0},
++	{0x3e08, 0x1f},
++	{0x3e1b, 0x14},
++	{0x440e, 0x02},
++	{0x4509, 0x38},
++	{0x4819, 0x06},
++	{0x481b, 0x03},
++	{0x481d, 0x0b},
++	{0x481f, 0x03},
++	{0x4821, 0x08},
++	{0x4823, 0x03},
++	{0x4825, 0x03},
++	{0x4827, 0x03},
++	{0x4829, 0x05},
++	{0x5799, 0x06},
++	{0x5ae0, 0xfe},
++	{0x5ae1, 0x40},
++	{0x5ae2, 0x30},
++	{0x5ae3, 0x28},
++	{0x5ae4, 0x20},
++	{0x5ae5, 0x30},
++	{0x5ae6, 0x28},
++	{0x5ae7, 0x20},
++	{0x5ae8, 0x3c},
++	{0x5ae9, 0x30},
++	{0x5aea, 0x28},
++	{0x5aeb, 0x3c},
++	{0x5aec, 0x30},
++	{0x5aed, 0x28},
++	{0x5aee, 0xfe},
++	{0x5aef, 0x40},
++	{0x5af4, 0x30},
++	{0x5af5, 0x28},
++	{0x5af6, 0x20},
++	{0x5af7, 0x30},
++	{0x5af8, 0x28},
++	{0x5af9, 0x20},
++	{0x5afa, 0x3c},
++	{0x5afb, 0x30},
++	{0x5afc, 0x28},
++	{0x5afd, 0x3c},
++	{0x5afe, 0x30},
++	{0x5aff, 0x28},
++	{0x36e9, 0x53},
++	{0x37f9, 0x53},
++	{0x0100, 0x01},
++	{SENSOR_REG_END, 0x00},
++};
++
++/*
++ * 1280x720@60, 2 lanes x 405 Mbps RAW10, 24 MHz MCLK.  Ported from
++ * espressif/esp-video-components esp_cam_sensor/sensors/sc2336/
++ * private_include/sc2336_mipi_2lane_24Minput_1280x720_raw10_60fps.h
++ * (Apache-2.0).  Same PLL as the 1080p table; window 0x3200-0x3207 =
++ * x 308..1619, y 180..907 of the array, i.e. a centre crop, not binning.
++ * HTS 0x0708 = 1800, VTS 0x02ee = 750 -> 81e6 / (1800 * 750) = 60.0 fps.
++ */
++static struct regval_list sensor_init_regs_1280_720_60fps_mipi[] = {
++	{0x0103, 0x01},
++	{0x0100, 0x00},
++	{0x36e9, 0x80},
++	{0x37f9, 0x80},
++	{0x301f, 0x30},
++	{0x3106, 0x05},
++	{0x3200, 0x01},
++	{0x3201, 0x34},
++	{0x3202, 0x00},
++	{0x3203, 0xb4},
++	{0x3204, 0x06},
++	{0x3205, 0x53},
++	{0x3206, 0x03},
++	{0x3207, 0x8b},
++	{0x3208, 0x05},
++	{0x3209, 0x00},
++	{0x320a, 0x02},
++	{0x320b, 0xd0},
++	{0x320c, 0x07},
++	{0x320d, 0x08},
++	{0x320e, 0x02},
++	{0x320f, 0xee},
++	{0x3210, 0x00},
++	{0x3211, 0x10},
++	{0x3212, 0x00},
++	{0x3213, 0x04},
++	{0x3248, 0x04},
++	{0x3249, 0x0b},
++	{0x3253, 0x08},
++	{0x3301, 0x09},
++	{0x3302, 0xff},
++	{0x3303, 0x10},
++	{0x3306, 0x60},
++	{0x3307, 0x02},
++	{0x330a, 0x01},
++	{0x330b, 0x10},
++	{0x330c, 0x16},
++	{0x330d, 0xff},
++	{0x3318, 0x02},
++	{0x3321, 0x0a},
++	{0x3327, 0x0e},
++	{0x332b, 0x12},
++	{0x3333, 0x10},
++	{0x3334, 0x40},
++	{0x335e, 0x06},
++	{0x335f, 0x0a},
++	{0x3364, 0x1f},
++	{0x337c, 0x02},
++	{0x337d, 0x0e},
++	{0x3390, 0x09},
++	{0x3391, 0x0f},
++	{0x3392, 0x1f},
++	{0x3393, 0x20},
++	{0x3394, 0x20},
++	{0x3395, 0x30},
++	{0x33a2, 0x04},
++	{0x33b1, 0x80},
++	{0x33b2, 0x68},
++	{0x33b3, 0x42},
++	{0x33f9, 0x70},
++	{0x33fb, 0xd0},
++	{0x33fc, 0x0f},
++	{0x33fd, 0x1f},
++	{0x349f, 0x03},
++	{0x34a6, 0x0f},
++	{0x34a7, 0x1f},
++	{0x34a8, 0x42},
++	{0x34a9, 0x06},
++	{0x34aa, 0x01},
++	{0x34ab, 0x23},
++	{0x34ac, 0x01},
++	{0x34ad, 0x84},
++	{0x3630, 0xf4},
++	{0x3633, 0x22},
++	{0x3639, 0xf4},
++	{0x363c, 0x47},
++	{0x3641, 0x03},
++	{0x3670, 0x09},
++	{0x3674, 0xf4},
++	{0x3675, 0xfb},
++	{0x3676, 0xed},
++	{0x367c, 0x09},
++	{0x367d, 0x0f},
++	{0x3690, 0x33},
++	{0x3691, 0x33},
++	{0x3692, 0x43},
++	{0x3698, 0x89},
++	{0x3699, 0x96},
++	{0x369a, 0xd0},
++	{0x369b, 0xd0},
++	{0x369c, 0x09},
++	{0x369d, 0x0f},
++	{0x36a2, 0x09},
++	{0x36a3, 0x0f},
++	{0x36a4, 0x1f},
++	{0x36d0, 0x01},
++	{0x36ea, 0x09},
++	{0x36eb, 0x0c},
++	{0x36ec, 0x1c},
++	{0x36ed, 0x28},
++	{0x3722, 0xe1},
++	{0x3724, 0x41},
++	{0x3725, 0xc1},
++	{0x3728, 0x20},
++	{0x37fa, 0x09},
++	{0x37fb, 0x32},
++	{0x37fc, 0x11},
++	{0x37fd, 0x37},
++	{0x3900, 0x0d},
++	{0x3905, 0x98},
++	{0x391b, 0x81},
++	{0x391c, 0x10},
++	{0x3933, 0x81},
++	{0x3934, 0xc5},
++	{0x3940, 0x68},
++	{0x3941, 0x00},
++	{0x3942, 0x01},
++	{0x3943, 0xc6},
++	{0x3952, 0x02},
++	{0x3953, 0x0f},
++	{0x3e01, 0x37},
++	{0x3e02, 0xe0},
+ 	{0x3e08, 0x1f},
+ 	{0x3e1b, 0x14},
+ 	{0x440e, 0x02},
+@@ -481,10 +672,183 @@
+ 		.colorspace = V4L2_COLORSPACE_SRGB,
+ 		.regs = sensor_init_regs_1920_1080_30fps_mipi,
+ 	},
++	{
++		.width = 1280,
++		.height = 720,
++		.fps = 60 << 16 | 1,
++		.mbus_code = V4L2_MBUS_FMT_SBGGR10_1X10,
++		.colorspace = V4L2_COLORSPACE_SRGB,
++		.regs = sensor_init_regs_1280_720_60fps_mipi,
++	},
++};
++
++/*
++ * Per-mode timing.  Modes 0 and 1 are published tables used verbatim.
++ * Modes >= 2 are EXPERIMENTAL derived crops: a published base table
++ * (720p60 for HTS 1800 crops, 1080p for full-width strips, same PLL) is
++ * written without its stream-on, then sensor_write_window() programs the
++ * window, output size, HTS and VTS.  Window geometry follows the
++ * published SC2336 crops: the array window is (W+32) x (H+8), centred
++ * in a 1928 x 1088 array, with output offsets x=16, y=4 (x=4 for the
++ * full 1920 width, which uses the whole array width).
++ * No binning/skipping exists in any published SC2336 table, so every
++ * mode other than 0 narrows the field of view.
++ *
++ * min_vts = active rows + 30: measured on a T23N, the ISP stops delivering
++ * frames (or delivers noise) below roughly 23-31 lines of vertical
++ * blanking; 30 is the smallest value seen working (720p60, VTS 750).
++ * max_fps follows from min_vts at 81 MHz.  Mode 7's bin/skip recipe
++ * produces a corrupted image on SC2336 (kept for further research).
++ */
++struct sensor_mode_timing {
++	unsigned int width, height;
++	unsigned int hts;        /* 0x320c/0x320d */
++	unsigned int vts;        /* 0x320e/0x320f at the default fps */
++	unsigned int min_vts;    /* active lines + minimum vertical blanking */
++	unsigned int max_fps;
++	unsigned int expo_margin;
++	unsigned int sclk;       /* pixel clock in Hz */
++	int base;                /* sensor_win_sizes[] entry holding the base table */
++	int derived;             /* window/HTS/VTS programmed after the base table */
++	int bin;                 /* 2x2 bin/skip: full array window, output W x H */
+ };
+ 
++#define SC2336_SCLK 81000000
++#define SC2336_ARRAY_W 1928
++#define SC2336_ARRAY_H 1088
++
++static const struct sensor_mode_timing sensor_modes[] = {
++	/*
++	 * 0: stock 1080p, full FOV, 25 fps default, 32 max (stock: 30).  Exposure margin 6, not the
++	 * stock 4: at VTS-4 the SC2336 stretches the frame (measured 33.50 ms instead
++	 * of 33.33 at 30 fps), at VTS-6 it holds the period.
++	 */
++	{ 1920, 1080, 2250, 1440, 1080 + 30, 32, 6, SC2336_SCLK, 0, 0 },
++	/* 1: published 720p60 centre crop (2/3 FOV) */
++	{ 1280, 720, 1800, 750, 720 + 30, 60, 6, SC2336_SCLK, 1, 0 },
++	/* 2: EXPERIMENTAL full-width strip 1920x540: full H FOV, 1/2 V FOV, 60 fps (max 63) */
++	{ 1920, 540, 2250, 600, 540 + 30, 63, 6, SC2336_SCLK, 0, 1 },
++	/* 3: EXPERIMENTAL 960x540 centre crop (1/2 FOV), 75 fps (max 78) */
++	{ 960, 540, 1800, 600, 540 + 30, 78, 6, SC2336_SCLK, 1, 1 },
++	/* 4: EXPERIMENTAL 640x480 centre crop (1/3 x 4/9 FOV), 75 fps (max 88) */
++	{ 640, 480, 1800, 600, 480 + 30, 88, 6, SC2336_SCLK, 1, 1 },
++	/* 5: EXPERIMENTAL 640x360 centre crop (1/3 FOV), 90 fps (max 115) */
++	{ 640, 360, 1800, 500, 360 + 30, 115, 6, SC2336_SCLK, 1, 1 },
++	/* 6: EXPERIMENTAL full-width strip 1920x360: full H FOV, 1/3 V FOV, 90 fps (max 92) */
++	{ 1920, 360, 2250, 400, 360 + 30, 92, 6, SC2336_SCLK, 0, 1 },
++	/*
++	 * 7: EXPERIMENTAL 2x2 bin/skip 960x540 over the full array (full FOV), 60 fps (max 65).
++	 * Uses the SmartSens bin registers from the SC200AI 960x540@120 table
++	 * (0x3215/0x3220/0x5000/0x5900/0x5901); unpublished for SC2336, may not work.
++	 */
++	{ 960, 540, 2250, 600, 540 + 30, 63, 6, SC2336_SCLK, 0, 1, 1 },
++};
++
++#define SENSOR_NUM_MODES ARRAY_SIZE(sensor_modes)
++
++static const struct sensor_mode_timing *mtiming = &sensor_modes[0];
++
++static struct tx_isp_sensor_win_setting mode_win;
++
+ struct tx_isp_sensor_win_setting *wsize = &sensor_win_sizes[0];
+ 
++/* point wsize/mtiming at the selected mode and patch the static attributes */
++static void sensor_apply_mode(void) {
++	if (sensor_mode < 0 || sensor_mode >= SENSOR_NUM_MODES) {
++		ISP_ERROR("%s: invalid sensor_mode %d, using 0\n", SENSOR_NAME, sensor_mode);
++		sensor_mode = 0;
++	}
++
++	mtiming = &sensor_modes[sensor_mode];
++	if (mtiming->derived) {
++		mode_win = sensor_win_sizes[mtiming->base];
++		mode_win.width = mtiming->width;
++		mode_win.height = mtiming->height;
++		mode_win.fps = (mtiming->sclk / (mtiming->hts * mtiming->vts)) << 16 | 1;
++		wsize = &mode_win;
++	} else {
++		wsize = &sensor_win_sizes[mtiming->base];
++	}
++
++	sensor_info.width = wsize->width;
++	sensor_info.height = wsize->height;
++	sensor_info.max_fps = mtiming->max_fps;
++
++	sensor_attr.mipi.image_twidth = wsize->width;
++	sensor_attr.mipi.image_theight = wsize->height;
++	sensor_attr.total_width = mtiming->hts;
++	sensor_attr.total_height = mtiming->vts;
++	sensor_attr.max_integration_time_native = mtiming->vts - mtiming->expo_margin;
++	sensor_attr.integration_time_limit = mtiming->vts - mtiming->expo_margin;
++	sensor_attr.max_integration_time = mtiming->vts - mtiming->expo_margin;
++	sensor_attr.one_line_expr_in_us = (mtiming->hts * 1000 + mtiming->sclk / 2000) / (mtiming->sclk / 1000);
++
++	ISP_INFO("%s mode %d%s: %dx%d hts %u vts %u max %u fps\n", SENSOR_NAME, sensor_mode,
++		mtiming->derived ? " (EXPERIMENTAL)" : "", wsize->width, wsize->height,
++		mtiming->hts, mtiming->vts, mtiming->max_fps);
++}
++
++int sensor_write(struct tx_isp_subdev *sd, uint16_t reg, unsigned char value);
++
++static int sensor_write16(struct tx_isp_subdev *sd, uint16_t reg, unsigned int value) {
++	int ret = sensor_write(sd, reg, (value >> 8) & 0xff);
++
++	return ret ? ret : sensor_write(sd, reg + 1, value & 0xff);
++}
++
++/* program window, output size and frame timing of a derived mode (stream must be off) */
++static int sensor_write_window(struct tx_isp_subdev *sd) {
++	unsigned int w = mtiming->width, h = mtiming->height;
++	unsigned int aw, xs, xoff, ys = (SC2336_ARRAY_H - (h + 8)) / 2;
++	int ret = 0;
++
++	if (mtiming->bin) {
++		/* full array in, binned 960x540 out */
++		aw = SC2336_ARRAY_W;
++		xs = 0;
++		xoff = 2;
++		ys = 0;
++		h = SC2336_ARRAY_H - 8; /* window rows; output height written below */
++	} else if (w + 32 > SC2336_ARRAY_W) {
++		/* full width: whole array, centred output */
++		aw = SC2336_ARRAY_W;
++		xs = 0;
++		xoff = (SC2336_ARRAY_W - w) / 2;
++	} else {
++		aw = w + 32;
++		xs = (SC2336_ARRAY_W - aw) / 2;
++		xoff = 16;
++	}
++
++	ret |= sensor_write16(sd, 0x3200, xs);
++	ret |= sensor_write16(sd, 0x3202, ys);
++	ret |= sensor_write16(sd, 0x3204, xs + aw - 1);
++	ret |= sensor_write16(sd, 0x3206, ys + h + 8 - 1);
++	ret |= sensor_write16(sd, 0x3208, w);
++	ret |= sensor_write16(sd, 0x320a, mtiming->height);
++	ret |= sensor_write16(sd, 0x320c, mtiming->hts);
++	ret |= sensor_write16(sd, 0x320e, mtiming->vts);
++	ret |= sensor_write16(sd, 0x3210, xoff);
++	ret |= sensor_write16(sd, 0x3212, mtiming->bin ? 2 : 4);
++	if (mtiming->bin) {
++		/* SC200AI-style analog skip + digital bin (vertical and horizontal 2x) */
++		ret |= sensor_write(sd, 0x3215, 0x31);
++		ret |= sensor_write(sd, 0x3220, 0x17);
++		ret |= sensor_write(sd, 0x5000, 0x46);
++		ret |= sensor_write(sd, 0x5900, 0xf1);
++		ret |= sensor_write(sd, 0x5901, 0x04);
++	}
++	/* initial exposure inside the short frame; AE takes over afterwards */
++	ret |= sensor_write(sd, 0x3e00, 0x00);
++	ret |= sensor_write16(sd, 0x3e01, ((mtiming->vts - mtiming->expo_margin) / 2) << 4);
++
++	ISP_INFO("%s window x %u..%u y %u..%u out %ux%u off %u hts %u vts %u%s\n", SENSOR_NAME,
++		xs, xs + aw - 1, ys, ys + h + 7, w, mtiming->height, xoff, mtiming->hts, mtiming->vts,
++		mtiming->bin ? " bin2x2" : "");
++
++	return ret;
++}
++
+ static struct regval_list sensor_stream_on_mipi[] = {
+ 	{0x0100, 0x01},
+ 	{SENSOR_REG_END, 0x00},
+@@ -688,7 +1052,23 @@
+ 	sensor->video.mbus.field = V4L2_FIELD_NONE;
+ 	sensor->video.mbus.colorspace = wsize->colorspace;
+ 	sensor->video.fps = wsize->fps;
+-	ret = sensor_write_array(sd, wsize->regs);
++	if (mtiming->derived) {
++		/* base table minus its stream-on, then the derived window, then stream on */
++		struct regval_list *v;
++
++		for (v = wsize->regs; v->reg_num != SENSOR_REG_END; v++) {
++			if (v->reg_num == 0x0100 && v->value == 0x01)
++				continue;
++			ret = sensor_write(sd, v->reg_num, v->value);
++			if (ret)
++				return ret;
++		}
++		ret = sensor_write_window(sd);
++		if (!ret)
++			ret = sensor_write_array(sd, sensor_stream_on_mipi);
++	} else {
++		ret = sensor_write_array(sd, wsize->regs);
++	}
+ 	if (ret) {
+ 		return ret;
+ 	}
+@@ -747,12 +1127,12 @@
+ 	int ret = 0;
+ 
+ 	newformat = (((fps >> 16) / (fps & 0xffff)) << 8) + ((((fps >> 16) % (fps & 0xffff)) << 8) / (fps & 0xffff));
+-	if (newformat > (SENSOR_OUTPUT_MAX_FPS << 8) || newformat < (SENSOR_OUTPUT_MIN_FPS << 8)) {
++	if (newformat > (mtiming->max_fps << 8) || newformat < (SENSOR_OUTPUT_MIN_FPS << 8)) {
+ 		ISP_ERROR("warn: fps(%d) not in range\n", fps);
+ 		return -1;
+ 	}
+ 
+-	clk = SENSOR_SUPPORT_30FPS_SCLK;
++	clk = mtiming->sclk;
+ 	ret += sensor_read(sd, 0x320c, &val);
+ 	hts = val;
+ 	ret += sensor_read(sd, 0x320d, &val);
+@@ -763,6 +1143,11 @@
+ 
+ 	hts = ((hts << 8) + val);
+ 	vts = clk * (fps & 0xffff) / hts / ((fps & 0xffff0000) >> 16);
++	if (vts < mtiming->min_vts) {
++		ISP_ERROR("warn: fps(%d) needs vts %u < minimum %u for mode %d\n", fps, vts,
++			mtiming->min_vts, sensor_mode);
++		return -1;
++	}
+ 	ret += sensor_write(sd, 0x320f, (unsigned char)(vts & 0xff));
+ 	ret += sensor_write(sd, 0x320e, (unsigned char)(vts >> 8));
+ 	if (0 != ret) {
+@@ -771,10 +1156,10 @@
+ 	}
+ 
+ 	sensor->video.fps = fps;
+-	sensor->video.attr->max_integration_time_native = vts - 4;
+-	sensor->video.attr->integration_time_limit = vts - 4;
++	sensor->video.attr->max_integration_time_native = vts - mtiming->expo_margin;
++	sensor->video.attr->integration_time_limit = vts - mtiming->expo_margin;
+ 	sensor->video.attr->total_height = vts;
+-	sensor->video.attr->max_integration_time = vts - 4;
++	sensor->video.attr->max_integration_time = vts - mtiming->expo_margin;
+ 	ret = tx_isp_call_subdev_notify(sd, TX_ISP_EVENT_SYNC_SENSOR_ATTR, &sensor->video);
+ 
+ 	return ret;
+@@ -1116,6 +1501,7 @@
+ static __init int init_sensor(void) {
+ 	int ret = 0;
+ 
++	sensor_apply_mode();
+ 	sensor_common_init(&sensor_info);
+ 
+ 	ret = private_driver_get_interface();

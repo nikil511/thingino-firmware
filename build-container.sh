@@ -66,7 +66,7 @@ fi
 
 # Ensure podman machine has enough memory (macOS/Windows only; Linux rootless has no VM)
 if [ "$CONTAINER_ENGINE" = "podman" ] && podman machine list >/dev/null 2>&1; then
-    PODMAN_MACHINE=$(podman machine list --format "{{.Name}}" 2>/dev/null | head -1)
+    PODMAN_MACHINE=$(podman machine list --format "{{.Name}}" 2>/dev/null | head -1 | tr -d "*")
     if [ -n "$PODMAN_MACHINE" ]; then
         CURRENT_MEM=$(podman machine inspect "$PODMAN_MACHINE" --format "{{.Resources.Memory}}" 2>/dev/null)
         if [ -n "$CURRENT_MEM" ] && [ "$CURRENT_MEM" -lt "$PODMAN_MIN_MEMORY_MB" ]; then
