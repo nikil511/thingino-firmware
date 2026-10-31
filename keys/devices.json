@@ -1,4 +1,11 @@
 {
   "version": 1,
-  "devices": []
+  "devices": [
+    {
+      "id": "sonoff-s2-demo-01",
+      "description": "Sonoff S2 (Ingenic T23N, SC2336), Thingino Ciao + snapsign, photo-origin demo camera",
+      "public_key": "ff4380a4c365946ba05a27214759f422462740b163f93f8783f0e09e24b24791",
+      "added": "2026-10-31"
+    }
+  ]
 }
