@@ -9,6 +9,7 @@ before relying on it.
 - `verify.py`: command-line verifier. Python 3 standard library only.
 - `index.html`: the same check in the browser. The photo never leaves the page.
 - `AGENTS.md`: step-by-step instructions for an AI agent asked to verify a photo.
+- `VALIDATION.md`: how validation works, byte by byte, with a worked example.
 - `tests/`: sample photos signed by the real camera code with a public test key.
 - `camera/`: `snapsign`, the signing add-on for cameras that run prudynt.
 

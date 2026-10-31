@@ -1,85 +1,116 @@
 # Agent instructions: verify that a photo came from a registered camera
 
-Use these steps when someone gives you a JPEG and asks whether it was taken by
-one of the cameras listed in this repository. The format and the registry are
-described in `README.md`.
+You are here because someone has a JPEG and wants to know whether one of the
+cameras registered on this branch took it. You can answer that with a local
+check; nothing needs to be uploaded anywhere.
 
-## 1. Get the original bytes
+Read `VALIDATION.md` if you need to understand or explain how the check
+works. The steps below are enough to run it.
 
-- Work on the file exactly as the person provided it. Do not open and re-save
-  it, convert it, strip metadata, resize it or let any tool "fix" it. Any such
-  step destroys the signature.
-- If the photo is at a URL, download it to a file as-is
-  (`curl -sSL -o photo.jpg <url>`). Do not use a preview or thumbnail.
-- If the person only has a copy that went through a chat app, email client,
-  screenshot or social network, tell them the signature is very likely gone
-  and ask for the original file.
+## In one minute
 
-## 2. Run the verifier
+Each registered camera signs its photos with a private key that stays on the
+camera. The matching public keys are in `keys/devices.json`. The signature is
+stored inside the JPEG, in a 93-byte block right before the file's last two
+bytes, and covers every byte before it, including the capture time. If the
+signature checks out against a registered key, the file is byte-for-byte what
+that camera produced.
 
-From a clone of this branch:
+## 1. Get this branch
+
+If you are not already in a checkout of it:
+
+```bash
+git clone --branch device-keys --single-branch --depth 1 \
+  https://github.com/nikil511/thingino-firmware.git photo-origin
+cd photo-origin
+```
+
+This branch shares no files with the firmware branches, so the clone is
+small. If you cannot use git, downloading `verify.py` alone is enough; it
+fetches the key list itself:
+
+```bash
+curl -sSfLO https://raw.githubusercontent.com/nikil511/thingino-firmware/device-keys/verify.py
+```
+
+## 2. Get the original photo bytes
+
+- Use the file exactly as the person provided it. Do not open and re-save
+  it, convert it, strip metadata or resize it. Read it only as raw bytes.
+- If the photo is at a URL, download it as-is: `curl -sSL -o photo.jpg <url>`.
+  Do not use a preview or thumbnail.
+- If the photo was pasted into the chat as an image, you may only have a
+  re-encoded copy. Ask for the file itself.
+- If the person's copy went through a messaging app, social network or a
+  screenshot, the signature is almost certainly gone. Say so and ask for the
+  original file.
+
+## 3. Run the verifier
 
 ```bash
 python3 verify.py --json photo.jpg
 ```
 
-If you only have `verify.py` on its own, it downloads `keys/devices.json` from
-the published branch. To check against one key someone gave you:
-`python3 verify.py --json --key <64-hex> photo.jpg`.
+Python 3 is all it needs. Useful variants:
 
-It needs only Python 3; nothing to install. Do not substitute a different
-verifier unless Python is unavailable (see step 5).
+- `--key <64 hex chars>` checks against one specific public key instead of
+  the registry.
+- `--registry <path or URL>` uses a different `devices.json`.
 
-## 3. Read the result
+Before trusting a result on a surprising photo, you can confirm the tool
+works: `sh tests/run.sh` should print four `ok` lines.
 
-The JSON has `status`, plus `device`, `key_fingerprint`, `capture_time_utc`,
-`sha256` and `reason` where they apply.
+## 4. Interpret the result
 
-| `status` | Exit | What to tell the person |
-| --- | --- | --- |
-| `VERIFIED` | 0 | The file is byte-for-byte what camera `device.id` signed. Give the device id and description, the capture time, and the SHA-256. |
-| `INVALID` | 1 | It carries a camera signature, but the file was changed after signing. Treat it as tampered. Quote `reason`. |
-| `NOT_SIGNED` | 3 | No camera signature. Either not from a registered camera, or re-encoded on the way. Ask for the original. |
-| `UNKNOWN_DEVICE` | 4 | Signed by a camera key that is not registered here. Origin cannot be confirmed. Give the `key_fingerprint`. |
-| (exit 2) | 2 | Tool or input error. Read stderr and fix the input; do not report a verdict. |
+The JSON contains `status`, and where they apply `device`,
+`key_fingerprint`, `capture_time_utc`, `sha256`, `registry` and `reason`.
 
-Say "unverified" for the capture time unless the status is `VERIFIED`. Even
-then it is the camera's own clock.
+| `status` | Exit | Meaning | What to tell the person |
+| --- | --- | --- | --- |
+| `VERIFIED` | 0 | Signed by a registered camera, unchanged since. | Camera `device.id` and its description, the capture time, and the file's SHA-256. |
+| `INVALID` | 1 | It has a camera signature, but the file changed after signing. | Treat it as altered. Quote `reason`. |
+| `NOT_SIGNED` | 3 | No camera signature in the file. | Either not from a registered camera, or re-encoded on the way. Ask for the original. |
+| `UNKNOWN_DEVICE` | 4 | Signed by a camera whose key is not registered here. | Origin cannot be confirmed. Give the `key_fingerprint`. |
+| (none) | 2 | Tool or input error, message on stderr. | Fix the input and rerun. Do not report a verdict. |
 
-## 4. State the limits
+Rules for the answer:
 
-Always add, in one or two sentences, what a `VERIFIED` result does not prove:
+- Call the capture time "signed" only when the status is `VERIFIED`. Even
+  then, it is the camera's own clock.
+- `VERIFIED` is about the file, not the scene. Always add one sentence on the
+  limits: in this demo the key is stored in the camera's flash, so someone
+  with full access to that camera could copy it, and a camera photographing
+  a screen still produces a valid signature.
 
-- The key lives in the camera's flash in this demo, so someone with full
-  access to that camera could copy it and sign other images.
-- A signature does not show the scene was real (for example, a photo of a
-  screen).
+Example answer for a verified photo:
 
-## 5. Without Python
+> The photo is verified. It was signed by camera `sonoff-s2-demo-01`
+> (Sonoff S2 demo camera) and has not been modified since. Signed capture
+> time: 2026-10-31 18:44:16 UTC, by the camera's clock. SHA-256: `...`.
+> This proves the file came from that camera unaltered; it doesn't prove the
+> scene was genuine, and in this demo the camera's key could be copied by
+> someone with full access to the device.
 
-Reimplement the check from the format in `README.md` ("How the camera signs"):
+## 5. If you want a second opinion
 
-1. The file must end with `FF D9`. The 93 bytes before that must start with
-   `FF EF 00 5B` followed by UUID bytes `b050bf0788564598869e44c4dc208f26`.
-2. Byte 20 of that segment is the version (must be `01`), bytes 21-28 the
-   key fingerprint, bytes 29-92 the Ed25519 signature.
-3. Find the registry entry whose SHA-512(public key)[0:8] equals the
-   fingerprint.
-4. Verify the signature with that public key over the first `len - 95` bytes
-   of the file: everything before the segment, without the segment and the
-   final `FF D9`.
+`verify.py` uses its own small Ed25519 implementation so that it needs no
+packages. `VALIDATION.md` ("Independent cross-check") has a 20-line script
+that runs the same check with the `cryptography` library. If the two
+disagree, report that instead of a verdict.
 
-Use a standard Ed25519 implementation (for example `cryptography`, PyNaCl,
-libsodium, Node's `crypto.verify(null, msg, key, sig)` or WebCrypto). Run
-`sh tests/run.sh` or check your code against `tests/sample-signed.jpg`
-(valid) and `tests/sample-tampered.jpg` (invalid) with `tests/test-keys.json`
-first.
+## 6. Without Python
+
+Implement the steps in `VALIDATION.md` ("Validation steps") with any standard
+Ed25519 library (libsodium, Go `crypto/ed25519`, Node
+`crypto.verify(null, msg, key, sig)`, WebCrypto). Test your code on
+`tests/sample-signed.jpg` (must verify) and `tests/sample-tampered.jpg`
+(must fail) with `tests/test-keys.json` before using it on the real photo.
 
 ## Do not
 
-- Do not add, remove or edit entries in `keys/devices.json` while verifying a
-  photo. Registering cameras is a separate, human-approved change.
+- Do not edit `keys/devices.json` while verifying a photo. Registering
+  cameras is a separate change a human approves.
 - Do not treat `tests/test-keys.json` as a real camera. Its private key is
   public.
-- Do not upload the person's photo anywhere to verify it. Everything runs
-  locally.
+- Do not upload the photo to any service to check it.
