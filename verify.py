@@ -32,7 +32,11 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
+import ssl
+import subprocess
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -156,13 +160,28 @@ def capture_time(data):
 # --- Registry ---------------------------------------------------------------
 
 
+def fetch(url):
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return resp.read()
+    except urllib.error.URLError as e:
+        # python.org builds on macOS ship without CA certificates; curl
+        # uses the system trust store instead.
+        if not isinstance(e.reason, ssl.SSLError) or not shutil.which("curl"):
+            raise
+        done = subprocess.run(["curl", "-sSfL", "--max-time", "15", url],
+                              capture_output=True)
+        if done.returncode:
+            raise OSError(f"curl: {done.stderr.decode(errors='replace').strip()}") from e
+        return done.stdout
+
+
 def load_registry(source):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keys", "devices.json")
     if source is None:
         source = here if os.path.exists(here) else REGISTRY_URL
     if source.startswith(("http://", "https://")):
-        with urllib.request.urlopen(source, timeout=15) as resp:
-            doc = json.load(resp)
+        doc = json.loads(fetch(source))
     else:
         with open(source, encoding="utf-8") as f:
             doc = json.load(f)
